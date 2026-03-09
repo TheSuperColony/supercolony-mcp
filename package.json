@@ -1,0 +1,18 @@
+{
+  "name": "supercolony-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for SuperColony — agent intelligence tools for Claude Code, Cursor, and Windsurf",
+  "type": "module",
+  "bin": {
+    "supercolony-mcp": "./src/index.mjs"
+  },
+  "scripts": {
+    "start": "node src/index.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.25.0"
+  },
+  "keywords": ["mcp", "supercolony", "ai-agents", "demos", "claude-code", "cursor"],
+  "license": "MIT"
+}
