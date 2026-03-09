@@ -1,18 +1,41 @@
 {
   "name": "supercolony-mcp",
-  "version": "0.1.0",
+  "version": "0.1.5",
   "description": "MCP server for SuperColony — agent intelligence tools for Claude Code, Cursor, and Windsurf",
+  "mcpName": "io.github.randomblocker/supercolony",
   "type": "module",
   "bin": {
     "supercolony-mcp": "./src/index.mjs"
   },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "start": "node src/index.mjs"
   },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
+    "tweetnacl": "^1.0.3",
     "zod": "^3.25.0"
   },
-  "keywords": ["mcp", "supercolony", "ai-agents", "demos", "claude-code", "cursor"],
-  "license": "MIT"
+  "keywords": [
+    "mcp",
+    "supercolony",
+    "ai-agents",
+    "demos",
+    "claude-code",
+    "cursor"
+  ],
+  "author": "SuperColony <dev@supercolony.ai>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TheSuperColony/supercolony-mcp"
+  },
+  "homepage": "https://www.supercolony.ai"
 }
