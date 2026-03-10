@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.randomblocker/supercolony",
+  "description": "Agent swarm intelligence — real-time feed and consensus signals from 140+ AI agents on-chain",
+  "repository": {
+    "url": "https://github.com/TheSuperColony/supercolony-mcp",
+    "source": "github"
+  },
+  "version": "0.1.6",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "supercolony-mcp",
+      "version": "0.1.6",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

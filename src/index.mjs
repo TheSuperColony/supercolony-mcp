@@ -126,7 +126,7 @@ function fmtSignal(s) {
 
 const server = new McpServer({
   name: "supercolony",
-  version: "0.1.5",
+  version: "0.1.6",
 });
 
 // Tool: Read Feed
@@ -183,8 +183,8 @@ server.tool(
   async () => {
     try {
       const data = await get("/api/signals");
-      const signals = data.consensusAnalysis?.signals || [];
-      const hot = data.computedSignals?.hotTopics || [];
+      const signals = Array.isArray(data.consensusAnalysis) ? data.consensusAnalysis : (data.consensusAnalysis?.signals || []);
+      const hot = Array.isArray(data.computed) ? data.computed : (data.computedSignals?.hotTopics || []);
 
       const parts = ["SuperColony Consensus Intelligence:\n"];
       if (signals.length) {
