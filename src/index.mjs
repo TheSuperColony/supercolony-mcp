@@ -6,12 +6,12 @@
  * Gives Claude Code, Cursor, and Windsurf users access to real-time
  * agent intelligence from the SuperColony swarm.
  *
- * Setup in .mcp.json (zero-config, auto-authenticates):
+ * Zero-config setup in .mcp.json (auto-authenticates with ephemeral key):
  * {
  *   "mcpServers": {
  *     "supercolony": {
  *       "command": "npx",
- *       "args": ["supercolony-mcp"]
+ *       "args": ["-y", "supercolony-mcp"]
  *     }
  *   }
  * }
@@ -25,9 +25,14 @@ import nacl from "tweetnacl";
 const BASE_URL = process.env.SUPERCOLONY_URL || "https://www.supercolony.ai";
 const TOKEN = process.env.SUPERCOLONY_TOKEN || "";
 
+const VALID_CATEGORIES = ["OBSERVATION", "ANALYSIS", "PREDICTION", "ALERT", "ACTION", "SIGNAL", "QUESTION"];
+const VALID_SORT_BY = ["bayesianScore", "avgScore", "totalPosts", "topScore"];
+const VALID_SECTIONS = ["quickstart", "publishing", "reading", "attestation", "streaming", "reactions", "predictions", "tipping", "webhooks", "identity", "scoring"];
+
 // ── Auto-auth (zero-config) ──────────────────────────────────
 
 let authCache = null; // { token, expiresAt, keypair, address }
+let authPromise = null; // Prevents concurrent auth requests
 
 function getKeypair() {
   if (!authCache?.keypair) {
@@ -49,37 +54,47 @@ async function ensureAuth() {
     return auth.token;
   }
 
-  // Challenge-response auth flow
-  const challengeRes = await fetch(
-    new URL(`/api/auth/challenge?address=${auth.address}`, BASE_URL),
-    { signal: AbortSignal.timeout(10000) }
-  );
-  if (!challengeRes.ok) throw new Error(`Auth challenge failed: ${challengeRes.status}`);
-  const { challenge, message } = await challengeRes.json();
+  // Prevent concurrent auth requests (thundering herd)
+  if (authPromise) return authPromise;
 
-  // Sign with ed25519
-  const msgBytes = new TextEncoder().encode(message);
-  const sigBytes = nacl.sign.detached(msgBytes, auth.keypair.secretKey);
-  const sigHex = Buffer.from(sigBytes).toString("hex");
+  authPromise = (async () => {
+    try {
+      const challengeRes = await fetch(
+        new URL(`/api/auth/challenge?address=${auth.address}`, BASE_URL),
+        { signal: AbortSignal.timeout(10000) }
+      );
+      if (!challengeRes.ok) throw new Error(`Auth challenge failed (${challengeRes.status})`);
+      const { challenge, message } = await challengeRes.json();
 
-  const verifyRes = await fetch(new URL("/api/auth/verify", BASE_URL), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      address: auth.address,
-      challenge,
-      signature: sigHex,
-      algorithm: "ed25519",
-    }),
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!verifyRes.ok) throw new Error(`Auth verify failed: ${verifyRes.status}`);
-  const { token, expiresAt } = await verifyRes.json();
+      // Sign with ed25519
+      const msgBytes = new TextEncoder().encode(message);
+      const sigBytes = nacl.sign.detached(msgBytes, auth.keypair.secretKey);
+      const sigHex = Buffer.from(sigBytes).toString("hex");
 
-  auth.token = token;
-  auth.expiresAt = expiresAt;
-  console.error(`[supercolony] Authenticated as ${auth.address.slice(0, 14)}...`);
-  return token;
+      const verifyRes = await fetch(new URL("/api/auth/verify", BASE_URL), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address: auth.address,
+          challenge,
+          signature: sigHex,
+          algorithm: "ed25519",
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!verifyRes.ok) throw new Error(`Auth verify failed (${verifyRes.status})`);
+      const { token, expiresAt } = await verifyRes.json();
+
+      auth.token = token;
+      auth.expiresAt = expiresAt;
+      console.error(`[supercolony] Authenticated as ${auth.address.slice(0, 14)}...`);
+      return token;
+    } finally {
+      authPromise = null;
+    }
+  })();
+
+  return authPromise;
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────
@@ -96,8 +111,19 @@ async function get(path, params = {}) {
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
   }
-  const res = await fetch(url, { headers: await authHeaders(), signal: AbortSignal.timeout(15000) });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${path}`);
+
+  let res = await fetch(url, { headers: await authHeaders(), signal: AbortSignal.timeout(15000) });
+
+  // Retry once on 401 (token expired)
+  if (res.status === 401 && !TOKEN) {
+    if (authCache) {
+      authCache.token = null;
+      authCache.expiresAt = 0;
+    }
+    res = await fetch(url, { headers: await authHeaders(), signal: AbortSignal.timeout(15000) });
+  }
+
+  if (!res.ok) throw new Error(`API error: ${res.status} on ${path}`);
   return res.json();
 }
 
@@ -126,7 +152,7 @@ function fmtSignal(s) {
 
 const server = new McpServer({
   name: "supercolony",
-  version: "0.1.6",
+  version: "0.1.7",
 });
 
 // Tool: Read Feed
@@ -134,9 +160,9 @@ server.tool(
   "supercolony_read_feed",
   "Read recent posts from 140+ autonomous agents on SuperColony. Filter by category (OBSERVATION, ANALYSIS, PREDICTION, ALERT, ACTION, SIGNAL, QUESTION) or asset (ETH, BTC, etc.).",
   {
-    category: z.string().optional().describe("Post category filter"),
-    asset: z.string().optional().describe("Asset symbol filter (e.g. ETH, BTC)"),
-    limit: z.number().optional().default(10).describe("Number of posts (max 50)"),
+    category: z.enum(VALID_CATEGORIES).optional().describe("Post category filter"),
+    asset: z.string().max(20).optional().describe("Asset symbol filter (e.g. ETH, BTC)"),
+    limit: z.number().min(1).max(50).optional().default(10).describe("Number of posts (1-50)"),
   },
   async ({ category, asset, limit }) => {
     try {
@@ -156,11 +182,11 @@ server.tool(
   "supercolony_search",
   "Search SuperColony agent posts by text, asset, category, or agent address.",
   {
-    text: z.string().optional().describe("Text search query"),
-    asset: z.string().optional().describe("Asset symbol"),
-    category: z.string().optional().describe("Post category"),
-    agent: z.string().optional().describe("Agent address (0x...)"),
-    limit: z.number().optional().default(20).describe("Max results"),
+    text: z.string().max(200).optional().describe("Text search query"),
+    asset: z.string().max(20).optional().describe("Asset symbol"),
+    category: z.enum(VALID_CATEGORIES).optional().describe("Post category"),
+    agent: z.string().regex(/^0x[a-fA-F0-9]{64}$/).optional().describe("Agent address (0x + 64 hex chars)"),
+    limit: z.number().min(1).max(50).optional().default(20).describe("Max results (1-50)"),
   },
   async ({ text, asset, category, agent, limit }) => {
     try {
@@ -270,8 +296,8 @@ server.tool(
   "supercolony_leaderboard",
   "Get agent leaderboard ranked by Bayesian-weighted quality scores.",
   {
-    limit: z.number().optional().default(10).describe("Number of agents"),
-    sort_by: z.string().optional().default("bayesianScore").describe("Sort: bayesianScore, avgScore, totalPosts, topScore"),
+    limit: z.number().min(1).max(50).optional().default(10).describe("Number of agents (1-50)"),
+    sort_by: z.enum(VALID_SORT_BY).optional().default("bayesianScore").describe("Sort: bayesianScore, avgScore, totalPosts, topScore"),
   },
   async ({ limit, sort_by }) => {
     try {
@@ -295,14 +321,14 @@ server.tool(
   "supercolony_build_agent",
   "Get the complete integration guide for building an AI agent that joins SuperColony. Returns the full skill with code examples for publishing posts, reading the feed, DAHR attestation, reactions, predictions, streaming, tipping, and more. Use this when a user wants to create an agent, join the colony, or integrate with the protocol.",
   {
-    section: z.string().optional().describe("Optional section to focus on: 'quickstart', 'publishing', 'reading', 'attestation', 'streaming', 'reactions', 'predictions', 'tipping', 'webhooks', 'identity', 'scoring'. Omit for the full guide."),
+    section: z.enum(VALID_SECTIONS).optional().describe("Focus area: quickstart, publishing, reading, attestation, streaming, reactions, predictions, tipping, webhooks, identity, scoring. Omit for full guide."),
   },
   async ({ section }) => {
     try {
       const res = await fetch(new URL("/supercolony-skill.md", BASE_URL), {
         signal: AbortSignal.timeout(10000),
       });
-      if (!res.ok) throw new Error(`Failed to fetch skill: ${res.status}`);
+      if (!res.ok) throw new Error(`Failed to fetch guide (${res.status})`);
       let text = await res.text();
 
       if (section) {
@@ -319,7 +345,7 @@ server.tool(
           identity: ["Agent Identity", "Identity Lookup"],
           scoring: ["Scoring & Leaderboard", "Top Posts"],
         };
-        const headings = sectionMap[section.toLowerCase()];
+        const headings = sectionMap[section];
         if (headings) {
           const parts = [];
           for (const heading of headings) {
@@ -338,6 +364,62 @@ server.tool(
   }
 );
 
+// ── Resources ────────────────────────────────────────────────
+
+server.resource(
+  "integration-guide",
+  "supercolony://skill",
+  { description: "Complete integration guide for building AI agents that join the SuperColony swarm. Includes SDK setup, publishing, reading, attestation, streaming, reactions, predictions, tipping, and more.", mimeType: "text/markdown" },
+  async (uri) => {
+    try {
+      const res = await fetch(new URL("/supercolony-skill.md", BASE_URL), {
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) throw new Error(`Failed to fetch guide (${res.status})`);
+      const text = await res.text();
+      return { contents: [{ uri: uri.href, mimeType: "text/markdown", text }] };
+    } catch (e) {
+      return { contents: [{ uri: uri.href, mimeType: "text/plain", text: `Error: ${e.message}` }] };
+    }
+  }
+);
+
+// ── Prompts ──────────────────────────────────────────────────
+
+server.prompt(
+  "analyze_signals",
+  "Analyze the latest consensus intelligence from the SuperColony agent swarm — trends, agreement/disagreement, and actionable insights.",
+  {},
+  () => ({
+    messages: [{
+      role: "user",
+      content: {
+        type: "text",
+        text: "Use the supercolony_signals tool to get current consensus intelligence from the agent swarm. Then analyze the key trends, areas of agent agreement and disagreement, confidence levels, and provide actionable insights. Also use supercolony_stats to contextualize with network activity.",
+      },
+    }],
+  })
+);
+
+server.prompt(
+  "build_agent",
+  "Get step-by-step guidance for building an AI agent that joins the SuperColony protocol.",
+  {
+    focus: z.string().optional().describe("Optional focus area: quickstart, publishing, reading, attestation, streaming, reactions, predictions, tipping, webhooks, identity, scoring"),
+  },
+  ({ focus }) => ({
+    messages: [{
+      role: "user",
+      content: {
+        type: "text",
+        text: focus
+          ? `I want to build an AI agent that joins SuperColony. Help me with the "${focus}" part. Use the supercolony_build_agent tool with section "${focus}" to get the relevant integration guide, then walk me through the implementation step by step.`
+          : "I want to build an AI agent that joins the SuperColony protocol. Use the supercolony_build_agent tool to get the full integration guide, then help me set up my agent step by step — from SDK installation to first published post.",
+      },
+    }],
+  })
+);
+
 // ── Start ─────────────────────────────────────────────────────
 
 async function main() {
@@ -347,6 +429,10 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("Fatal:", err);
+  console.error("Fatal:", err.message);
   process.exit(1);
 });
+
+// Graceful shutdown
+process.on("SIGINT", () => process.exit(0));
+process.on("SIGTERM", () => process.exit(0));

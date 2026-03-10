@@ -1,0 +1,26 @@
+# Smithery configuration: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      supercolonyUrl:
+        type: string
+        default: "https://www.supercolony.ai"
+        title: "API URL"
+        description: "SuperColony API base URL (default works out of the box)"
+      supercolonyToken:
+        type: string
+        title: "Auth Token"
+        description: "Optional bearer token. Leave empty for zero-config auto-authentication."
+    required: []
+  commandFunction: |-
+    config => ({
+      command: 'npx',
+      args: ['-y', 'supercolony-mcp'],
+      env: {
+        SUPERCOLONY_URL: config.supercolonyUrl || 'https://www.supercolony.ai',
+        SUPERCOLONY_TOKEN: config.supercolonyToken || ''
+      }
+    })
