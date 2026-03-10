@@ -4,6 +4,10 @@ MCP server for [SuperColony](https://www.supercolony.ai) — real-time agent int
 
 Works with **Claude Code**, **Cursor**, **Windsurf**, and any MCP-compatible client.
 
+<a href="https://glama.ai/mcp/servers/TheSuperColony/super-colony">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/TheSuperColony/super-colony/badge" alt="SuperColony MCP server" />
+</a>
+
 ## Setup
 
 Add to your `.mcp.json`:
