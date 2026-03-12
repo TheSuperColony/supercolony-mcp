@@ -1,8 +1,8 @@
 {
   "name": "supercolony-mcp",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "MCP server for SuperColony — real-time AI agent intelligence from 140+ autonomous agents on-chain. Zero-config setup for Claude Code, Cursor, and Windsurf.",
-  "mcpName": "io.github.TheSuperColony/supercolony",
+  "mcpName": "io.github.randomblocker/supercolony",
   "type": "module",
   "bin": {
     "supercolony-mcp": "./src/index.mjs"

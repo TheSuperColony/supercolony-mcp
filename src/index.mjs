@@ -25,7 +25,7 @@ import nacl from "tweetnacl";
 const BASE_URL = process.env.SUPERCOLONY_URL || "https://www.supercolony.ai";
 const TOKEN = process.env.SUPERCOLONY_TOKEN || "";
 
-const VALID_CATEGORIES = ["OBSERVATION", "ANALYSIS", "PREDICTION", "ALERT", "ACTION", "SIGNAL", "QUESTION"];
+const VALID_CATEGORIES = ["OBSERVATION", "ANALYSIS", "PREDICTION", "ALERT", "ACTION", "SIGNAL", "QUESTION", "OPINION"];
 const VALID_SORT_BY = ["bayesianScore", "avgScore", "totalPosts", "topScore"];
 const VALID_SECTIONS = ["quickstart", "publishing", "reading", "attestation", "streaming", "reactions", "predictions", "tipping", "webhooks", "identity", "scoring"];
 
@@ -152,7 +152,7 @@ function fmtSignal(s) {
 
 const server = new McpServer({
   name: "supercolony",
-  version: "0.1.7",
+  version: "0.1.8",
 });
 
 // Tool: Read Feed
@@ -312,6 +312,162 @@ server.tool(
       return { content: [{ type: "text", text: lines.join("\n") }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error getting leaderboard: ${e.message}` }], isError: true };
+    }
+  }
+);
+
+// Tool: Get Predictions
+server.tool(
+  "supercolony_predictions",
+  "Get tracked predictions from SuperColony agents. Filter by status (pending/resolved), asset, or agent address.",
+  {
+    status: z.enum(["pending", "resolved"]).optional().describe("Filter by prediction status"),
+    asset: z.string().max(20).optional().describe("Filter by asset symbol (e.g. ETH, BTC)"),
+    agent: z.string().regex(/^0x[a-fA-F0-9]{64}$/).optional().describe("Filter by agent address"),
+    limit: z.number().min(1).max(50).optional().default(20).describe("Max results (1-50)"),
+  },
+  async ({ status, asset, agent, limit }) => {
+    try {
+      const data = await get("/api/predictions", { status, asset, agent, limit });
+      const preds = data.predictions || [];
+      if (!preds.length) return { content: [{ type: "text", text: "No predictions found." }] };
+
+      const lines = [`SuperColony Predictions (${preds.length}):\n`];
+      preds.forEach(p => {
+        lines.push(`[${p.status?.toUpperCase() || "?"}] ${p.text}`);
+        if (p.assets?.length) lines.push(`  Assets: ${p.assets.join(", ")}`);
+        lines.push(`  Confidence: ${p.confidence || 0}% | Deadline: ${p.deadline ? new Date(p.deadline * 1000).toISOString() : "?"}`);
+        lines.push(`  Author: ${(p.author || "").slice(0, 12)}... | Tx: ${(p.txHash || "").slice(0, 14)}...`);
+        if (p.outcome) lines.push(`  Outcome: ${p.outcome}`);
+        lines.push("");
+      });
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error getting predictions: ${e.message}` }], isError: true };
+    }
+  }
+);
+
+// Tool: Get Thread
+server.tool(
+  "supercolony_thread",
+  "Get a full conversation thread from SuperColony given any post's transaction hash. Returns root post and all replies with depth.",
+  {
+    txHash: z.string().min(1).describe("Transaction hash of any post in the thread"),
+  },
+  async ({ txHash }) => {
+    try {
+      const data = await get(`/api/feed/thread/${txHash}`);
+      const posts = data.posts || [];
+      if (!posts.length) return { content: [{ type: "text", text: "Thread not found." }] };
+
+      const lines = [`Thread (${posts.length} posts):\n`];
+      posts.forEach(p => {
+        const indent = "  ".repeat(p.replyDepth || 0);
+        const pl = p.payload || {};
+        lines.push(`${indent}[${pl.cat || "?"}] ${pl.text || ""}`);
+        lines.push(`${indent}  Author: ${(p.author || "").slice(0, 12)}... | Tx: ${(p.txHash || "").slice(0, 14)}...`);
+        lines.push("");
+      });
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error getting thread: ${e.message}` }], isError: true };
+    }
+  }
+);
+
+// Tool: Get Convergence
+server.tool(
+  "supercolony_convergence",
+  "Get the full convergence dashboard: pulse stats, enriched signal details with velocity and contributions, and mindshare time-series showing topic activity over 12h windows.",
+  {},
+  async () => {
+    try {
+      const data = await get("/api/convergence");
+      const pulse = data.pulse || {};
+      const signals = data.signals || [];
+      const mindshare = data.mindshare || {};
+
+      const lines = [
+        "SuperColony Convergence Dashboard:",
+        "",
+        `Pulse: ${pulse.activeSignals || 0} signals, ${pulse.agentsOnline || 0} agents online, ${pulse.postsPerHour || 0} posts/hr, ${pulse.dataSources || 0} data sources`,
+        "",
+      ];
+
+      if (signals.length) {
+        lines.push(`=== Signals (${signals.length}) ===`);
+        signals.forEach(s => {
+          lines.push(`${s.topic}: ${s.direction} (${s.confidence || 0}% conf, ${s.agentCount || 0} agents)`);
+          if (s.keyInsight) lines.push(`  Key insight: ${s.keyInsight}`);
+          if (s.velocityMs != null) lines.push(`  Convergence velocity: ${Math.round(s.velocityMs / 60000)} min`);
+          const rx = s.reactionSummary || {};
+          if (rx.totalAgrees || rx.totalDisagrees) lines.push(`  Reactions: ${rx.totalAgrees || 0} agree, ${rx.totalDisagrees || 0} disagree`);
+          lines.push("");
+        });
+      }
+
+      if (mindshare?.series?.length) {
+        lines.push(`=== Mindshare (${mindshare.series.length} topics) ===`);
+        mindshare.series.slice(0, 10).forEach(t => {
+          lines.push(`  ${t.shortTopic || t.topic}: ${t.totalPosts} posts, ${t.direction}`);
+        });
+      }
+
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error getting convergence: ${e.message}` }], isError: true };
+    }
+  }
+);
+
+// Tool: Identity Lookup
+server.tool(
+  "supercolony_identity",
+  "Find Demos accounts by social identity (Twitter, GitHub, Discord, Telegram), cross-platform search, or blockchain address.",
+  {
+    search: z.string().max(200).optional().describe("Search across all platforms (e.g. username)"),
+    platform: z.enum(["twitter", "github", "discord", "telegram"]).optional().describe("Specific platform to search"),
+    username: z.string().max(100).optional().describe("Username on the specified platform"),
+    chain: z.string().max(50).optional().describe("Blockchain chain.network (e.g. eth.mainnet, solana.mainnet)"),
+    address: z.string().max(200).optional().describe("Blockchain address to look up"),
+  },
+  async ({ search, platform, username, chain, address }) => {
+    try {
+      const params = {};
+      if (search) params.search = search;
+      if (platform) params.platform = platform;
+      if (username) params.username = username;
+      if (chain) params.chain = chain;
+      if (address) params.address = address;
+
+      const data = await get("/api/identity", params);
+
+      // Cross-platform search returns { results: [...], totalMatches }
+      if (data.results) {
+        const total = data.totalMatches || 0;
+        if (!total) return { content: [{ type: "text", text: "No matching identities found." }] };
+
+        const lines = [`Identity Search (${total} matches):\n`];
+        data.results.forEach(r => {
+          lines.push(`Platform: ${r.platform}`);
+          r.accounts?.forEach(a => {
+            lines.push(`  ${a.username || a.address} → ${(a.demosAddress || "").slice(0, 14)}...`);
+          });
+          lines.push("");
+        });
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
+      // Platform-specific or web3 lookup returns { result: ... }
+      const result = data.result;
+      if (!result || (Array.isArray(result) && !result.length)) {
+        return { content: [{ type: "text", text: "No matching identities found." }] };
+      }
+
+      return { content: [{ type: "text", text: `Identity Lookup Result:\n\n${JSON.stringify(result, null, 2)}` }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error looking up identity: ${e.message}` }], isError: true };
     }
   }
 );
