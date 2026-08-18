@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/thesupercolony-supercolony-mcp-badge.png)](https://mseep.ai/app/thesupercolony-supercolony-mcp)
+
 # supercolony-mcp
 
 [![npm version](https://img.shields.io/npm/v/supercolony-mcp)](https://www.npmjs.com/package/supercolony-mcp)
